@@ -1,49 +1,34 @@
 // --- STATE & KONFIGURASI GLOBAL ---
 let currentMode = 'single'; // 'single' atau 'multi'
-let isCameraActive = false;
 let gameActive = false;
 let startTime = null;
 let timerInterval = null;
-let isCaptured = false; // Menandai apakah foto wajah sudah diambil
+let appState = "tracking"; // 'tracking', 'countdown', 'puzzle'
 
-// Konfigurasi Grid Puzzle 3x3
-const GRID_SIZE = 3;
-let puzzleP1 = { pieces: [], solved: false, boardBox: null };
-let puzzleP2 = { pieces: [], solved: false, boardBox: null };
+// Konfigurasi Grid 3x3 (Mengikuti Proyek Pertama)
+const GRID = 3;
+const PINCH_THRESHOLD = 0.055;
+const FRAME_PADDING = 28;
+const FREEZE_HOLD_MS = 250;
+const COUNTDOWN_SECONDS = 3;
+const SNAP_DISTANCE_RATIO = 0.45;
 
-// Pemetaan Indeks Jari Berdasarkan Dokumentasi Resmi MediaPipe (image_a0f4c5.jpg)
+// Struktur Board Puzzle (Mengadaptasi Kedahsyatan Proyek Pertama)
+let puzzleP1 = { pieces: [], solved: false, boardBox: null, tileW: 0, tileH: 0 };
+let puzzleP2 = { pieces: [], solved: false, boardBox: null, tileW: 0, tileH: 0 };
+
+// State Interaksi Drag & Drop Tradisional / Swap
+const dragP1 = { activeHand: null, piece: null, offsetX: 0, offsetY: 0 };
+const dragP2 = { activeHand: null, piece: null, offsetX: 0, offsetY: 0 };
+
+const freezeGate = { holding: false, since: 0 };
+const countdown = { active: false, startedAt: 0 };
+
+// Indeks Landmark Jari Jalur Resmi MediaPipe
 const LM = {
-    WRIST: 0,
-    THUMB_TIP: 4,
-    INDEX_MCP: 5,
-    INDEX_TIP: 8,
-    MIDDLE_MCP: 9,
-    MIDDLE_TIP: 12,
-    RING_MCP: 13,
-    RING_TIP: 16,
-    PINKY_MCP: 17,
-    PINKY_TIP: 20
+    WRIST: 0, THUMB_TIP: 4, INDEX_MCP: 5, INDEX_TIP: 8,
+    MIDDLE_MCP: 9, MIDDLE_TIP: 12, RING_MCP: 13, RING_TIP: 16, PINKY_MCP: 17, PINKY_TIP: 20
 };
-
-const PINCH_THRESHOLD = 0.055; // Ambang batas jarak pinch (normalisasi)
-const FRAME_PADDING = 28;      // Padding untuk bingkai capture
-const COUNTDOWN_SECONDS = 3;   // Durasi hitung mundur capture
-const FIST_HOLD_FRAMES = 12;   // Durasi menahan kepalan tangan (frame)
-const SNAP_DISTANCE = 35;     // Toleransi magnet kepingan mengunci otomatis (pixel)
-
-// State Pelacakan Drag masing-masing board
-let dragP1 = { active: false, piece: null, offsetX: 0, offsetY: 0 };
-let dragP2 = { active: false, piece: null, offsetX: 0, offsetY: 0 };
-
-// Hubungan koneksi jari tangan untuk visualisasi skeleton (berdasarkan image_a0f4c5.jpg)
-const HAND_CONNECTIONS = [
-    [0, 1], [1, 2], [2, 3], [3, 4],     // Ibu Jari
-    [0, 5], [5, 6], [6, 7], [7, 8],     // Telunjuk
-    [5, 9], [9, 10], [10, 11], [11, 12],// Jari Tengah
-    [9, 13], [13, 14], [14, 15], [15, 16],// Jari Manis
-    [13, 17], [17, 18], [18, 19], [19, 20],// Jari Kelingking
-    [0, 17]                             // Telapak bawah
-];
 
 // --- ELEMEN DOM ---
 const menuScreen = document.getElementById("menu-screen");
@@ -62,9 +47,7 @@ const ctxP1 = canvasP1.getContext("2d");
 const canvasP2 = document.getElementById("canvas-p2");
 const ctxP2 = canvasP2.getContext("2d");
 
-const countdownDiv = document.getElementById("countdown");
-
-// --- INTERAKSI MENU & LAYAR ---
+// --- INTERAKSI NAVIGASI MENU ---
 btnSingle.addEventListener("click", () => {
     btnSingle.classList.add("active");
     btnMulti.classList.remove("active");
@@ -88,46 +71,23 @@ btnStart.addEventListener("click", async () => {
         player2Side.classList.add("hidden");
         p1Label.textContent = "Pemain Wajahmu";
     }
-    
     await startAIEngine();
 });
 
 btnBack.addEventListener("click", () => {
     stopGameAndTimer();
-    resetAppState(); 
+    resetEverything();
     gameScreen.classList.add("hidden");
     menuScreen.classList.remove("hidden");
 });
 
-// --- TIMER LOGIC ---
-function startTimer() {
-    startTime = Date.now();
-    timerInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        const seconds = Math.floor((elapsed / 1000) % 60);
-        const minutes = Math.floor((elapsed / 1000 / 60) % 60);
-        timerEl.textContent = `Waktu: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }, 1000);
-}
-
-function stopGameAndTimer() {
-    clearInterval(timerInterval);
-    gameActive = false;
-    if (videoEl.srcObject) {
-        videoEl.srcObject.getTracks().forEach(track => track.stop());
-    }
-    countdownDiv.classList.add("hidden");
-}
-
-// --- INITIALIZE MEDIAPIPE HANDS & CAMERA ---
+// --- ENGINE INITIALIZATION ---
 async function startAIEngine() {
-    // Setup Ukuran Canvas (Pemandangan)
     canvasP1.width = 400;
     canvasP1.height = 400;
     canvasP2.width = 400;
     canvasP2.height = 400;
 
-    // Ambil Akses Webcam
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 640, height: 480 },
@@ -135,11 +95,10 @@ async function startAIEngine() {
         });
         videoEl.srcObject = stream;
     } catch (err) {
-        alert("Gagal mengakses kamera: " + err.message);
+        alert("Kamera bermasalah: " + err.message);
         return;
     }
 
-    // Inisialisasi MediaPipe Hands dari CDN
     const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -153,82 +112,288 @@ async function startAIEngine() {
 
     hands.onResults(onHandResults);
 
-    // Loop Kamera
     const camera = new Camera(videoEl, {
-        onFrame: async () => {
-            await hands.send({ image: videoEl });
-        },
-        width: 640,
-        height: 480
+        onFrame: async () => { await hands.send({ image: videoEl }); },
+        width: 640, height: 480
     });
-    
     camera.start();
     gameActive = true;
+    appState = "tracking";
 }
 
-// Menghitung jarak matematika Euclidean
 function getDistance(pt1, pt2) {
     return Math.hypot(pt1.x - pt2.x, pt1.y - pt2.y);
 }
+function isPinching(landmarks) {
+    return getDistance(landmarks[LM.THUMB_TIP], landmarks[LM.INDEX_TIP]) < PINCH_THRESHOLD;
+}
+function mirrorLandmarkX(pt) { return { x: 1 - pt.x, y: pt.y }; }
 
-// --- CORE AI PROCESSOR & GAME LOOP ---
+// --- AI GAME LOOP INTERACTION ---
 function onHandResults(results) {
     if (!gameActive) return;
 
     ctxP1.clearRect(0, 0, canvasP1.width, canvasP1.height);
     ctxP2.clearRect(0, 0, canvasP2.width, canvasP2.height);
 
-    // Tampilkan feed video mentah sebelum wajah ter-capture
-    if (!isCaptured) {
-        ctxP1.save();
-        ctxP1.translate(canvasP1.width, 0);
-        ctxP1.scale(-1, 1);
-        ctxP1.drawImage(videoEl, 0, 0, canvasP1.width, canvasP1.height);
-        ctxP1.restore();
-
-        if (currentMode === 'multi') {
-            ctxP2.save();
-            ctxP2.translate(canvasP2.width, 0);
-            ctxP2.scale(-1, 1);
-            ctxP2.drawImage(videoEl, 0, 0, canvasP2.width, canvasP2.height);
-            ctxP2.restore();
-        }
+    // Render Background Cermin Kamera Utama
+    if (appState === "tracking" || appState === "countdown") {
+        drawLiveMirror(ctxP1);
+        if (currentMode === 'multi') drawLiveMirror(ctxP2);
     } else {
-        // Tampilkan kepingan puzzle jika wajah sudah ter-capture
-        drawBoardAndPieces();
+        // Jika status sudah masuk tahap 'puzzle', render kepingan wajah di papan game
+        drawBoardAndPieces(ctxP1, puzzleP1);
+        if (currentMode === 'multi') drawBoardAndPieces(ctxP2, puzzleP2);
     }
 
-    if (results.multiHandLandmarks && results.multiHandedness) {
-        let pinchingHandsCount = 0;
-        let p1HandActive = false;
-        let p2HandActive = false;
+    const handsLandmarks = results.multiHandLandmarks || [];
+    
+    if (handsLandmarks.length === 0) {
+        if (appState === "countdown") drawCountdownOverlay();
+        return;
+    }
 
-        results.multiHandLandmarks.forEach((landmarks, index) => {
-            const classification = results.multiHandedness[index];
+    // Logic 1: Tahap Tracking & Mengunci Gambar (Sama seperti Proyek Pertama)
+    if (appState === "tracking") {
+        if (currentMode === 'single' && handsLandmarks.length === 1) {
+            handleCaptureTrigger(handsLandmarks[0]);
+        } else if (currentMode === 'multi' && handsLandmarks.length === 2) {
+            // Mode Multiplayer butuh dua tangan pinch barengan buat ngunci
+            if (isPinching(handsLandmarks[0]) && isPinching(handsLandmarks[1])) {
+                startCountdownSequence();
+            }
+        }
+    }
+
+    // Logic 2: Tahap Hitung Mundur Jepret
+    if (appState === "countdown") {
+        drawCountdownOverlay();
+        return;
+    }
+
+    // Logic 3: Tahap Gameplay Geser Menggunakan Algoritma Proyek Pertama
+    if (appState === "puzzle") {
+        handsLandmarks.forEach((lm, i) => {
+            const classification = results.multiHandedness[i];
             const isLeftHand = classification.label === 'Left';
+            const pinching = isPinching(lm);
+            const indexPx = { x: (1 - lm[LM.INDEX_TIP].x) * canvasP1.width, y: lm[LM.INDEX_TIP].y * canvasP1.height };
 
-            // Ambil titik THUMB_TIP (4) dan INDEX_TIP (8) berdasarkan diagram image_a0f4c5.jpg
-            const thumbTip = landmarks[LM.THUMB_TIP];
-            const indexTip = landmarks[LM.INDEX_TIP];
+            if (currentMode === 'single') {
+                drawHandCursor(ctxP1, indexPx, pinching);
+                handleSlidingInteraction(puzzleP1, dragP1, "Single", pinching, indexPx);
+            } else {
+                // SINKRONISASI ARENA MULTIPLAYER LAYAR TERPISAH
+                if (!isLeftHand) { // Tangan Kanan asli -> Mengendalikan Arena Kiri (P1)
+                    drawHandCursor(ctxP1, indexPx, pinching);
+                    handleSlidingInteraction(puzzleP1, dragP1, "P1", pinching, indexPx);
+                } else { // Tangan Kiri asli -> Mengendalikan Arena Kanan (P2)
+                    drawHandCursor(ctxP2, indexPx, pinching);
+                    handleSlidingInteraction(puzzleP2, dragP2, "P2", pinching, indexPx);
+                }
+            }
+        });
+    }
+}
 
-            const pinchDistance = getDistance(thumbTip, indexTip);
-            const isPinching = pinchDistance < PINCH_THRESHOLD;
+function drawLiveMirror(ctx) {
+    ctx.save();
+    ctx.translate(ctx.canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(videoEl, 0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.restore();
+}
 
-            if (isPinching) pinchingHandsCount++;
+function drawHandCursor(ctx, pos, pinching) {
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 12, 0, 2 * Math.PI);
+    ctx.fillStyle = pinching ? "#00ffcc" : "#fca311";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+}
 
-            if (isCaptured) {
-                if (currentMode === 'single') {
-                    p1HandActive = true;
-                    // Visualisasikan skeleton tangan akurat di board
-                    drawHandSkeleton(ctxP1, landmarks, isPinching);
-                    handleDragLogic(puzzleP1, dragP1, canvasP1, indexTip, isPinching);
-                } else {
-                    // Multiplayer Split Screen
-                    if (!isLeftHand) { // Tangan Kanan asli -> mengontrol P1
-                        p1HandActive = true;
-                        drawHandSkeleton(ctxP1, landmarks, isPinching);
-                        handleDragLogic(puzzleP1, dragP1, canvasP1, indexTip, isPinching);
-                    } else { // Tangan Kiri asli -> mengontrol P2
-                        p2HandActive = true;
-                        drawHandSkeleton(ctxP2, landmarks, isPinching);
-                        handleDragLogic(puzzleP
+// --- LOGIKA HITUNG MUNDUR & PEMOTONGAN GRID PUZZLE ---
+function handleCaptureTrigger(hand) {
+    if (isPinching(hand)) {
+        if (!freezeGate.holding) {
+            freezeGate.holding = true;
+            freezeGate.since = performance.now();
+        }
+        if (performance.now() - freezeGate.since > FREEZE_HOLD_MS) {
+            freezeGate.holding = false;
+            startCountdownSequence();
+        }
+    } else {
+        freezeGate.holding = false;
+    }
+}
+
+function startCountdownSequence() {
+    appState = "countdown";
+    countdown.active = true;
+    countdown.startedAt = performance.now();
+}
+
+function drawCountdownOverlay() {
+    const elapsed = (performance.now() - countdown.startedAt) / 1000;
+    const remaining = COUNTDOWN_SECONDS - elapsed;
+    const n = Math.ceil(remaining);
+
+    if (remaining <= 0) {
+        countdown.active = false;
+        executeFaceCapture();
+        return;
+    }
+
+    [ctxP1, ctxP2].forEach((ctx, i) => {
+        if (i === 1 && currentMode === 'single') return;
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.font = "bold 60px monospace";
+        ctx.fillStyle = "#fca311";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(n), ctx.canvas.width / 2, ctx.canvas.height / 2);
+    });
+}
+
+function executeFaceCapture() {
+    appState = "puzzle";
+    const snapCanvas = document.createElement("canvas");
+    snapCanvas.width = canvasP1.width;
+    snapCanvas.height = canvasP1.height;
+    const snapCtx = snapCanvas.getContext("2d");
+    
+    snapCtx.translate(snapCanvas.width, 0);
+    snapCtx.scale(-1, 1);
+    snapCtx.drawImage(videoEl, 0, 0, snapCanvas.width, snapCanvas.height);
+
+    buildSlidingPuzzleGrid(puzzleP1, snapCanvas);
+    if (currentMode === 'multi') buildSlidingPuzzleGrid(puzzleP2, snapCanvas);
+    
+    startTimer();
+}
+
+function buildSlidingPuzzleGrid(puzzleObj, srcCanvas) {
+    const tileW = Math.floor(srcCanvas.width / GRID);
+    const tileH = Math.floor(srcCanvas.height / GRID);
+    puzzleObj.pieces = [];
+    puzzleObj.tileW = tileW;
+    puzzleObj.tileH = tileH;
+    puzzleObj.solved = false;
+
+    for (let row = 0; row < GRID; row++) {
+        for (let col = 0; col < GRID; col++) {
+            const pieceCanvas = document.createElement("canvas");
+            pieceCanvas.width = tileW;
+            pieceCanvas.height = tileH;
+            pieceCanvas.getContext("2d").drawImage(srcCanvas, col * tileW, row * tileH, tileW, tileH, 0, 0, tileW, tileH);
+
+            puzzleObj.pieces.push({
+                row, col, canvas: pieceCanvas, w: tileW, h: tileH,
+                x: col * tileW, y: row * tileH, placed: true
+            });
+        }
+    }
+
+    // Acak posisi koordinat kotak puzzle (Mekanisme Proyek Pertama)
+    const positions = puzzleObj.pieces.map(p => ({ x: p.x, y: p.y }));
+    for (let i = positions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [positions[i], positions[j]] = [positions[j], positions[i]];
+    }
+    puzzleObj.pieces.forEach((piece, i) => {
+        piece.x = positions[i].x;
+        piece.y = positions[i].y;
+        piece.placed = Math.abs(piece.x - (piece.col * tileW)) < 5 && Math.abs(piece.y - (piece.row * tileH)) < 5;
+    });
+}
+
+// --- MEKANISME SLIDING INTERACTION TRADISIONAL DARI PROYEK PERTAMA ---
+function handleSlidingInteraction(puzzleObj, dragTrack, handLabel, pinching, indexPx) {
+    if (puzzleObj.solved) return;
+
+    if (pinching) {
+        if (dragTrack.activeHand === null) {
+            // Cari kepingan terdekat dari kursor koordinat jari
+            const candidate = puzzleObj.pieces.find(piece => {
+                const cx = piece.x + piece.w / 2;
+                const cy = piece.y + piece.h / 2;
+                return Math.hypot(indexPx.x - cx, indexPx.y - cy) < Math.max(piece.w, piece.h) * 0.6;
+            });
+            if (candidate) {
+                dragTrack.activeHand = handLabel;
+                dragTrack.piece = candidate;
+                dragTrack.offsetX = indexPx.x - candidate.x;
+                dragTrack.offsetY = indexPx.y - candidate.y;
+                candidate.placed = false;
+            }
+        } else if (dragTrack.activeHand === handLabel && dragTrack.piece) {
+            dragTrack.piece.x = indexPx.x - dragTrack.offsetX;
+            dragTrack.piece.y = indexPx.y - dragTrack.offsetY;
+        }
+    } else {
+        if (dragTrack.activeHand === handLabel && dragTrack.piece) {
+            const piece = dragTrack.piece;
+            const correctX = piece.col * puzzleObj.tileW;
+            const correctY = piece.row * puzzleObj.tileH;
+            
+            // Cek kecocokan jarak snap magnet pengunci kotak puzzle
+            if (Math.hypot(piece.x - correctX, piece.y - correctY) < puzzleObj.tileW * SNAP_DISTANCE_RATIO) {
+                piece.x = correctX;
+                piece.y = correctY;
+                piece.placed = true;
+            }
+            dragTrack.activeHand = null;
+            dragTrack.piece = null;
+            
+            // Periksa kondisi kemenangan arena board
+            puzzleObj.solved = puzzleObj.pieces.every(p => p.placed);
+            if (puzzleObj.solved && (currentMode === 'single' || (puzzleP1.solved && puzzleP2.solved))) {
+                clearInterval(timerInterval);
+            }
+        }
+    }
+}
+
+function drawBoardAndPieces(ctx, puzzleObj) {
+    ctx.fillStyle = "#111215";
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    puzzleObj.pieces.forEach(piece => {
+        ctx.drawImage(piece.canvas, piece.x, piece.y);
+        ctx.strokeStyle = piece.placed ? "#5fae6e" : "rgba(255,255,255,0.2)";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(piece.x, piece.y, piece.w, piece.h);
+    });
+
+    if (puzzleObj.solved) {
+        ctx.fillStyle = "rgba(95,174,110,0.3)";
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.font = "bold 24px monospace";
+        ctx.fillStyle = "#5fae6e";
+        ctx.textAlign = "center";
+        ctx.fillText("ARENA SELESAI!", ctx.canvas.width / 2, ctx.canvas.height / 2);
+    }
+}
+
+// --- TIMER & HUB STATE UTILS ---
+function startTimer() {
+    startTime = Date.now();
+    timerInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const seconds = Math.floor((elapsed / 1000) % 60);
+        const minutes = Math.floor((elapsed / 1000 / 60) % 60);
+        timerEl.textContent = `Waktu: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }, 1000);
+}
+
+function resetEverything() {
+    isCaptured = false;
+    appState = "tracking";
+    puzzleP1.pieces = []; puzzleP1.solved = false;
+    puzzleP2.pieces = []; puzzleP2.solved = false;
+    timerEl.textContent = "Waktu: 00:00";
+}
