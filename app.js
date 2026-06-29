@@ -4,6 +4,7 @@ let isCameraActive = false;
 let gameActive = false;
 let startTime = null;
 let timerInterval = null;
+let isCaptured = false; // Menandai apakah foto wajah sudah diambil
 
 // Konfigurasi Grid Puzzle 3x3
 const GRID_SIZE = 3;
@@ -49,7 +50,7 @@ btnStart.addEventListener("click", async () => {
     
     if (currentMode === 'multi') {
         player2Side.classList.remove("hidden");
-        p1Label.textContent = "Pemain 1 (Tangan Kiri)";
+        p1Label.textContent = "Pemain 1 (Tangan Kanan)";
     } else {
         player2Side.classList.add("hidden");
         p1Label.textContent = "Pemain Wajahmu";
@@ -60,6 +61,7 @@ btnStart.addEventListener("click", async () => {
 
 btnBack.addEventListener("click", () => {
     stopGameAndTimer();
+    resetAppState(); // Reset status game agar bisa capture ulang nanti
     gameScreen.classList.add("hidden");
     menuScreen.classList.remove("hidden");
 });
@@ -85,13 +87,11 @@ function stopGameAndTimer() {
 
 // --- INITIALIZE MEDIAPIPE HANDS & CAMERA ---
 async function startAIEngine() {
-    // Setup Ukuran Canvas Awal
     canvasP1.width = 400;
     canvasP1.height = 400;
     canvasP2.width = 400;
     canvasP2.height = 400;
 
-    // Ambil Akses Webcam
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 640, height: 480 },
@@ -103,7 +103,6 @@ async function startAIEngine() {
         return;
     }
 
-    // Inisialisasi Objek Hands dari CDN MediaPipe yang dimuat di HTML
     const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -117,7 +116,6 @@ async function startAIEngine() {
 
     hands.onResults(onHandResults);
 
-    // Jalankan Loop Kamera Otomatis
     const camera = new Camera(videoEl, {
         onFrame: async () => {
             await hands.send({ image: videoEl });
@@ -129,17 +127,6 @@ async function startAIEngine() {
     camera.start();
     startTimer();
     gameActive = true;
-    
-    // Trigger simulasi potongan gambar awal wajah
-    setupInitialDummyPuzzle();
-}
-
-// --- CORE GAME ENGINE (LOGIKA PUZZLE) ---
-function setupInitialDummyPuzzle() {
-    // Generate kepingan kosong/acak sementara sebelum di-capture real
-    puzzleP1.solved = false;
-    puzzleP2.solved = false;
-    // Di sini nanti bisa dikembangkan fungsi slice objek gambar webcam
 }
 
 // Menghitung jarak Euclidean antar titik landmark tangan
@@ -151,63 +138,78 @@ function getDistance(pt1, pt2) {
 function onHandResults(results) {
     if (!gameActive) return;
 
-    // Bersihkan Canvas tiap frame
     ctxP1.clearRect(0, 0, canvasP1.width, canvasP1.height);
     ctxP2.clearRect(0, 0, canvasP2.width, canvasP2.height);
 
-    // Selalu gambar feed video mentah di background canvas sebagai cermin wajah
-    ctxP1.save();
-    ctxP1.translate(canvasP1.width, 0);
-    ctxP1.scale(-1, 1);
-    ctxP1.drawImage(videoEl, 0, 0, canvasP1.width, canvasP1.height);
-    ctxP1.restore();
+    // Jika belum melakukan jepretan foto, tampilkan live video di canvas
+    if (!isCaptured) {
+        ctxP1.save();
+        ctxP1.translate(canvasP1.width, 0);
+        ctxP1.scale(-1, 1);
+        ctxP1.drawImage(videoEl, 0, 0, canvasP1.width, canvasP1.height);
+        ctxP1.restore();
 
-    if (currentMode === 'multi') {
-        ctxP2.save();
-        ctxP2.translate(canvasP2.width, 0);
-        ctxP2.scale(-1, 1);
-        ctxP2.drawImage(videoEl, 0, 0, canvasP2.width, canvasP2.height);
-        ctxP2.restore();
+        if (currentMode === 'multi') {
+            ctxP2.save();
+            ctxP2.translate(canvasP2.width, 0);
+            ctxP2.scale(-1, 1);
+            ctxP2.drawImage(videoEl, 0, 0, canvasP2.width, canvasP2.height);
+            ctxP2.restore();
+        }
+    } else {
+        // Jika sudah di-screenshot, kunci gambar latar belakang menjadi kepingan puzzle
+        drawBoardAndPieces();
     }
 
-    // Jika ada tangan terdeteksi di kamera
     if (results.multiHandLandmarks && results.multiHandedness) {
+        let pinchingHandsCount = 0;
+
         results.multiHandLandmarks.forEach((landmarks, index) => {
             const classification = results.multiHandedness[index];
-            const isLeftHand = classification.label === 'Left'; // Deteksi Tangan Kiri/Kanan
+            const isLeftHand = classification.label === 'Left';
 
             const thumbTip = landmarks[4];
             const indexTip = landmarks[8];
 
-            // Cek status gestur Pinch (mencubit)
             const pinchDistance = getDistance(thumbTip, indexTip);
             const isPinching = pinchDistance < PINCH_THRESHOLD;
 
-            // Alokasikan aksi berdasarkan mode game
-            if (currentMode === 'single') {
-                // Mode Single: Tangan mana saja mengontrol Board P1
-                drawHandIndicator(ctxP1, indexTip, isPinching);
-                checkPuzzleInteraction(puzzleP1, indexTip, isPinching);
-            } else {
-                // Mode Multiplayer Split-Screen: 
-                // Tangan Kanan asli (di cermin jadi Kiri) -> Mengontrol P1
-                // Tangan Kiri asli (di cermin jadi Kanan) -> Mengontrol P2
-                if (!isLeftHand) {
+            if (isPinching) pinchingHandsCount++;
+
+            if (isCaptured) {
+                if (currentMode === 'single') {
                     drawHandIndicator(ctxP1, indexTip, isPinching);
                     checkPuzzleInteraction(puzzleP1, indexTip, isPinching);
                 } else {
-                    drawHandIndicator(ctxP2, indexTip, isPinching);
-                    checkPuzzleInteraction(puzzleP2, indexTip, isPinching);
+                    if (!isLeftHand) {
+                        drawHandIndicator(ctxP1, indexTip, isPinching);
+                        checkPuzzleInteraction(puzzleP1, indexTip, isPinching);
+                    } else {
+                        drawHandIndicator(ctxP2, indexTip, isPinching);
+                        checkPuzzleInteraction(puzzleP2, indexTip, isPinching);
+                    }
                 }
+            } else {
+                drawHandIndicator(ctxP1, indexTip, isPinching);
+                if (currentMode === 'multi') drawHandIndicator(ctxP2, indexTip, isPinching);
             }
         });
+
+        // LOGIKA DETEKSI JEPRET: 
+        // Singleplayer = Cukup 1 tangan pinch untuk ambil foto wajah
+        // Multiplayer = Butuh 2 tangan pinch bersamaan untuk mulai balapan
+        if (!isCaptured && (
+            (currentMode === 'single' && pinchingHandsCount >= 1) || 
+            (currentMode === 'multi' && pinchingHandsCount === 2)
+        )) {
+            captureWajahDanBikinPuzzle();
+        }
     }
 }
 
 // Menggambar lingkaran indikator di ujung jari telunjuk
 function drawHandIndicator(ctx, tip, isPinching) {
-    // Konversi koordinat normalisasi (0-1) ke ukuran pixel canvas
-    const cx = (1 - tip.x) * ctx.canvas.width; // Efek Mirroring
+    const cx = (1 - tip.x) * ctx.canvas.width; 
     const cy = tip.y * ctx.canvas.height;
 
     ctx.beginPath();
@@ -219,8 +221,102 @@ function drawHandIndicator(ctx, tip, isPinching) {
     ctx.stroke();
 }
 
+// --- CORE GAME ENGINE (LOGIKA SNAPSHOT & SLICE IMAGE) ---
+function captureWajahDanBikinPuzzle() {
+    isCaptured = true;
+    
+    const snapshotCanvas = document.createElement("canvas");
+    snapshotCanvas.width = canvasP1.width;
+    snapshotCanvas.height = canvasP1.height;
+    const snapCtx = snapshotCanvas.getContext("2d");
+    
+    snapCtx.translate(snapshotCanvas.width, 0);
+    snapCtx.scale(-1, 1);
+    snapCtx.drawImage(videoEl, 0, 0, snapshotCanvas.width, snapshotCanvas.height);
+    
+    sliceImageIntoPuzzle(puzzleP1, snapshotCanvas);
+    
+    if (currentMode === 'multi') {
+        sliceImageIntoPuzzle(puzzleP2, snapshotCanvas);
+    }
+}
+
+function sliceImageIntoPuzzle(puzzleObj, srcCanvas) {
+    const tileW = srcCanvas.width / GRID_SIZE;
+    const tileH = srcCanvas.height / GRID_SIZE;
+    puzzleObj.pieces = [];
+    
+    for (let row = 0; row < GRID_SIZE; row++) {
+        for (let col = 0; col < GRID_SIZE; col++) {
+            const pieceCanvas = document.createElement("canvas");
+            pieceCanvas.width = tileW;
+            pieceCanvas.height = tileH;
+            
+            pieceCanvas.getContext("2d").drawImage(
+                srcCanvas,
+                col * tileW, row * tileH, tileW, tileH,
+                0, 0, tileW, tileH
+            );
+            
+            puzzleObj.pieces.push({
+                correctRow: row,
+                correctCol: col,
+                currentRow: row,
+                currentCol: col,
+                canvas: pieceCanvas
+            });
+        }
+    }
+    
+    shufflePuzzlePieces(puzzleObj.pieces);
+}
+
+function shufflePuzzlePieces(piecesArray) {
+    for (let i = piecesArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tempRow = piecesArray[i].currentRow;
+        const tempCol = piecesArray[i].currentCol;
+        
+        piecesArray[i].currentRow = piecesArray[j].currentRow;
+        piecesArray[i].currentCol = piecesArray[j].currentCol;
+        
+        piecesArray[j].currentRow = tempRow;
+        piecesArray[j].currentCol = tempCol;
+    }
+}
+
+function drawBoardAndPieces() {
+    const tileW = canvasP1.width / GRID_SIZE;
+    const tileH = canvasP1.height / GRID_SIZE;
+
+    puzzleP1.pieces.forEach(piece => {
+        const dx = piece.currentCol * tileW;
+        const dy = piece.currentRow * tileH;
+        ctxP1.drawImage(piece.canvas, dx, dy);
+        ctxP1.strokeStyle = "rgba(0, 255, 204, 0.4)";
+        ctxP1.lineWidth = 1.5;
+        ctxP1.strokeRect(dx, dy, tileW, tileH);
+    });
+
+    if (currentMode === 'multi' && puzzleP2.pieces.length > 0) {
+        puzzleP2.pieces.forEach(piece => {
+            const dx = piece.currentCol * tileW;
+            const dy = piece.currentRow * tileH;
+            ctxP2.drawImage(piece.canvas, dx, dy);
+            ctxP2.strokeStyle = "rgba(252, 163, 17, 0.4)";
+            ctxP2.lineWidth = 1.5;
+            ctxP2.strokeRect(dx, dy, tileW, tileH);
+        });
+    }
+}
+
 function checkPuzzleInteraction(puzzleObj, tip, isPinching) {
     if (!isPinching) return;
-    // Logika penukaran kepingan geser berdasarkan posisi kursor jari telunjuk
-    // Ini area bebas kamu buat kustom algoritma geser ke depannya, Ki!
+    // Area kustomisasi interaksi pergeseran potongan puzzle
+}
+
+function resetAppState() {
+    isCaptured = false;
+    puzzleP1.pieces = [];
+    puzzleP2.pieces = [];
 }
