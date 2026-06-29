@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face Puzzle Arena</title>
+    <title>Sliding Puzzle Arena 🎭⚡</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
@@ -27,8 +27,8 @@
 
             <div class="instructions">
                 <p><strong>ATURAN GAME:</strong></p>
-                <p>👋 Gunakan tanganmu untuk screenshot/capture wajahmu.</p>
-                <p>👌 Susun kepingan puzzle menggunakan gestur tangan!</p>
+                <p>👋 Gunakan gestur pinch untuk capture snapshot wajahmu.</p>
+                <p>👌 Seret kepingan puzzle memanfaatkan petak kosong terdekat!</p>
             </div>
 
             <button id="btn-start" class="start-btn">NYALAKAN KAMERA & MULAI</button>
@@ -36,29 +36,55 @@
     </div>
 
     <div id="game-screen" class="screen hidden">
-        <div class="hud">
-            <div id="timer">Waktu: 00:00</div>
-            <button id="btn-back" class="sub-btn">Kembali ke Menu</button>
-        </div>
+        <div class="main-layout">
+            
+            <div class="arena-side">
+                <div class="hud">
+                    <div id="timer">Waktu: 00:00</div>
+                    <button id="btn-back" class="sub-btn">Kembali ke Menu</button>
+                </div>
 
-        <div class="arena-container">
-            <video id="webcam" autoplay playsinline style="display: none;"></video>
+                <div class="arena-container">
+                    <video id="webcam" autoplay playsinline style="display: none;"></video>
 
-            <div id="player1-side" class="game-board-wrapper">
-                <h3 id="p1-label" class="player-label">Pemain 1</h3>
-                <div class="canvas-container">
-                    <canvas id="canvas-p1"></canvas>
+                    <div id="player1-side" class="game-board-wrapper">
+                        <h3 id="p1-label" class="player-label">Pemain Wajahmu</h3>
+                        <div class="canvas-container">
+                            <canvas id="canvas-p1"></canvas>
+                        </div>
+                    </div>
+
+                    <div id="player2-side" class="game-board-wrapper hidden">
+                        <h3 class="player-label">Pemain 2 (Tangan Kiri)</h3>
+                        <div class="canvas-container">
+                            <canvas id="canvas-p2"></canvas>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div id="player2-side" class="game-board-wrapper hidden">
-                <h3 class="player-label">Pemain 2</h3>
-                <div class="canvas-container">
-                    <canvas id="canvas-p2"></canvas>
+            <div class="gallery-side">
+                <div class="gallery-header">
+                    <h3>GALERI</h3>
+                    <span id="galleryCount">0 / 3</span>
+                </div>
+                
+                <div id="galleryStrip" class="gallery-strip">
+                    <div id="galleryEmpty" class="gallery-empty">
+                        <p>Puzzle yang sudah kamu selesaikan akan muncul di sini.</p>
+                    </div>
+                </div>
+
+                <div class="gallery-actions">
+                    <button id="downloadStripBtn" class="action-btn download" disabled>UNDUH FOTO</button>
+                    <button id="resetAllBtn" class="action-btn reset">ULANG SEMUA</button>
                 </div>
             </div>
+
         </div>
     </div>
+
+    <div id="countdown" class="hidden">3</div>
 
     <script type="module" src="app.js"></script>
 </body>
