@@ -17,7 +17,7 @@ Terinspirasi dari konsep interaksi web modern, game ini mendukung mode bermain m
 - **Deployment:** GitHub Pages / Vercel
 
 ## 🎮 Cara Bermain
-1. Buka game melalui tautan live demo yang tersedia.
+1. Buka game melalui tautan live demo ikkypbs.github.io/Sliding-Puzzle-Arena/
 2. Pilih mode bermain: **Singleplayer** atau **Multiplayer**.
 3. Izinkan akses kamera perangkat kamu.
 4. Angkat tanganmu ke arah kamera untuk melakukan jepretan (*capture*) wajah.
