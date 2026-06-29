@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Puzzle Arena</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="menu-screen" class="screen">
+        <div class="menu-container">
+            <h1 class="glow-text">YOUR FACE<br><span class="highlight">PUZZLE ARENA</span></h1>
+            
+            <div class="mode-selection">
+                <button id="btn-single" class="menu-btn active">
+                    <span class="btn-title">SINGLE PLAYER</span>
+                    <span class="btn-desc">Main sendiri! Selesaikan puzzle wajahmu secepat mungkin.</span>
+                </button>
+                <button id="btn-multi" class="menu-btn">
+                    <span class="btn-title">MULTIPLAYER (VS)</span>
+                    <span class="btn-desc">Berdua lebih seru! Balapan susun puzzle layar terpisah.</span>
+                </button>
+            </div>
+
+            <div class="instructions">
+                <p><strong>ATURAN GAME:</strong></p>
+                <p>👋 Gunakan tanganmu untuk screenshot/capture wajahmu.</p>
+                <p>👌 Susun kepingan puzzle menggunakan gestur tangan!</p>
+            </div>
+
+            <button id="btn-start" class="start-btn">NYALAKAN KAMERA & MULAI</button>
+        </div>
+    </div>
+
+    <div id="game-screen" class="screen hidden">
+        <div class="hud">
+            <div id="timer">Waktu: 00:00</div>
+            <button id="btn-back" class="sub-btn">Kembali ke Menu</button>
+        </div>
+
+        <div class="arena-container">
+            <video id="webcam" autoplay playsinline style="display: none;"></video>
+
+            <div id="player1-side" class="game-board-wrapper">
+                <h3 id="p1-label" class="player-label">Pemain 1</h3>
+                <div class="canvas-container">
+                    <canvas id="canvas-p1"></canvas>
+                </div>
+            </div>
+
+            <div id="player2-side" class="game-board-wrapper hidden">
+                <h3 class="player-label">Pemain 2</h3>
+                <div class="canvas-container">
+                    <canvas id="canvas-p2"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
