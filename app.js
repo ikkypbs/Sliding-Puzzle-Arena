@@ -8,8 +8,8 @@ let isCaptured = false; // Menandai apakah foto wajah sudah diambil
 
 // Konfigurasi Grid Puzzle 3x3
 const GRID_SIZE = 3;
-let puzzleP1 = { pieces: [], solved: false, boardBox: null };
-let puzzleP2 = { pieces: [], solved: false, boardBox: null };
+let puzzleP1 = { pieces: [], solved: false };
+let puzzleP2 = { pieces: [], solved: false };
 
 // Ambang batas jarak untuk pinch/mencubit (antara ujung jempol & telunjuk)
 const PINCH_THRESHOLD = 0.06; 
@@ -157,7 +157,7 @@ function onHandResults(results) {
             ctxP2.restore();
         }
     } else {
-        // Jika sudah di-screenshot, kunci gambar latar belakang menjadi kepingan puzzle
+        // Jika sudah di-screenshot, gambar kepingan board puzzle-nya
         drawBoardAndPieces();
     }
 
@@ -179,14 +179,14 @@ function onHandResults(results) {
             if (isCaptured) {
                 if (currentMode === 'single') {
                     drawHandIndicator(ctxP1, indexTip, isPinching);
-                    checkPuzzleInteraction(puzzleP1, indexTip, isPinching);
+                    checkPuzzleInteraction(puzzleP1, canvasP1, indexTip, isPinching);
                 } else {
                     if (!isLeftHand) {
                         drawHandIndicator(ctxP1, indexTip, isPinching);
-                        checkPuzzleInteraction(puzzleP1, indexTip, isPinching);
+                        checkPuzzleInteraction(puzzleP1, canvasP1, indexTip, isPinching);
                     } else {
                         drawHandIndicator(ctxP2, indexTip, isPinching);
-                        checkPuzzleInteraction(puzzleP2, indexTip, isPinching);
+                        checkPuzzleInteraction(puzzleP2, canvasP2, indexTip, isPinching);
                     }
                 }
             } else {
@@ -195,9 +195,7 @@ function onHandResults(results) {
             }
         });
 
-        // LOGIKA DETEKSI JEPRET: 
-        // Singleplayer = Cukup 1 tangan pinch untuk ambil foto wajah
-        // Multiplayer = Butuh 2 tangan pinch bersamaan untuk mulai balapan
+        // LOGIKA DETEKSI JEPRET
         if (!isCaptured && (
             (currentMode === 'single' && pinchingHandsCount >= 1) || 
             (currentMode === 'multi' && pinchingHandsCount === 2)
@@ -245,6 +243,7 @@ function sliceImageIntoPuzzle(puzzleObj, srcCanvas) {
     const tileW = srcCanvas.width / GRID_SIZE;
     const tileH = srcCanvas.height / GRID_SIZE;
     puzzleObj.pieces = [];
+    puzzleObj.solved = false;
     
     for (let row = 0; row < GRID_SIZE; row++) {
         for (let col = 0; col < GRID_SIZE; col++) {
@@ -289,6 +288,7 @@ function drawBoardAndPieces() {
     const tileW = canvasP1.width / GRID_SIZE;
     const tileH = canvasP1.height / GRID_SIZE;
 
+    // Gambar P1
     puzzleP1.pieces.forEach(piece => {
         const dx = piece.currentCol * tileW;
         const dy = piece.currentRow * tileH;
@@ -298,6 +298,16 @@ function drawBoardAndPieces() {
         ctxP1.strokeRect(dx, dy, tileW, tileH);
     });
 
+    if (puzzleP1.solved) {
+        ctxP1.fillStyle = "rgba(0, 255, 204, 0.3)";
+        ctxP1.fillRect(0, 0, canvasP1.width, canvasP1.height);
+        ctxP1.font = "24px Arial";
+        ctxP1.fillStyle = "#fff";
+        ctxP1.textAlign = "center";
+        ctxP1.fillText("PUZZLE SELESAI!", canvasP1.width / 2, canvasP1.height / 2);
+    }
+
+    // Gambar P2
     if (currentMode === 'multi' && puzzleP2.pieces.length > 0) {
         puzzleP2.pieces.forEach(piece => {
             const dx = piece.currentCol * tileW;
@@ -307,16 +317,85 @@ function drawBoardAndPieces() {
             ctxP2.lineWidth = 1.5;
             ctxP2.strokeRect(dx, dy, tileW, tileH);
         });
+
+        if (puzzleP2.solved) {
+            ctxP2.fillStyle = "rgba(252, 163, 17, 0.3)";
+            ctxP2.fillRect(0, 0, canvasP2.width, canvasP2.height);
+            ctxP2.font = "24px Arial";
+            ctxP2.fillStyle = "#fff";
+            ctxP2.textAlign = "center";
+            ctxP2.fillText("PUZZLE SELESAI!", canvasP2.width / 2, canvasP2.height / 2);
+        }
     }
 }
 
-function checkPuzzleInteraction(puzzleObj, tip, isPinching) {
-    if (!isPinching) return;
-    // Area kustomisasi interaksi pergeseran potongan puzzle
+// LOGIKA UTAMA SINKRONISASI SWAP/PERGESERAN KEPINGAN
+let lastPinchState = false;
+
+function checkPuzzleInteraction(puzzleObj, canvasObj, tip, isPinching) {
+    if (puzzleObj.solved) return;
+
+    const tileW = canvasObj.width / GRID_SIZE;
+    const tileH = canvasObj.height / GRID_SIZE;
+
+    // Hitung posisi kursor piksel jari telunjuk di canvas
+    const cx = (1 - tip.x) * canvasObj.width;
+    const cy = tip.y * canvasObj.height;
+
+    // Cari baris dan kolom berapa yang sedang ditunjuk jari
+    const targetCol = Math.floor(cx / tileW);
+    const targetRow = Math.floor(cy / tileH);
+
+    if (targetCol >= 0 && targetCol < GRID_SIZE && targetRow >= 0 && targetRow < GRID_SIZE) {
+        // Trigger penukaran kepingan tepat saat gestur pinch baru aktif (Pinch Down)
+        if (isPinching && !lastPinchState) {
+            // Cari kepingan puzzle yang berada di posisi target penunjukan jari
+            const pieceAtCursor = puzzleObj.pieces.find(p => p.currentRow === targetRow && p.currentCol === targetCol);
+            
+            // Cari kepingan kosong/terakhir (yaitu kepingan pojok kanan bawah default row 2, col 2)
+            const blankPiece = puzzleObj.pieces.find(p => p.correctRow === GRID_SIZE - 1 && p.correctCol === GRID_SIZE - 1);
+
+            if (pieceAtCursor && blankPiece && pieceAtCursor !== blankPiece) {
+                // Periksa apakah kepingan yang ditunjuk bersebelahan langsung dengan kotak kosong (atas, bawah, kiri, kanan)
+                const dRow = Math.abs(pieceAtCursor.currentRow - blankPiece.currentRow);
+                const dCol = Math.abs(pieceAtCursor.currentCol - blankPiece.currentCol);
+
+                if ((dRow === 1 && dCol === 0) || (dRow === 0 && dCol === 1)) {
+                    // Tukar posisi grid kepingan aktif dengan kepingan kosong
+                    const tempRow = pieceAtCursor.currentRow;
+                    const tempCol = pieceAtCursor.currentCol;
+                    
+                    pieceAtCursor.currentRow = blankPiece.currentRow;
+                    pieceAtCursor.currentCol = blankPiece.currentCol;
+                    
+                    blankPiece.currentRow = tempRow;
+                    blankPiece.currentCol = tempCol;
+
+                    // Cek apakah urutan seluruh kepingan puzzle sudah kembali ke susunan benar
+                    checkWinCondition(puzzleObj);
+                }
+            }
+        }
+    }
+    lastPinchState = isPinching;
+}
+
+function checkWinCondition(puzzleObj) {
+    const isWin = puzzleObj.pieces.every(piece => {
+        return piece.currentRow === piece.correctRow && piece.currentCol === piece.correctCol;
+    });
+    
+    if (isWin) {
+        puzzleObj.solved = true;
+        clearInterval(timerInterval);
+    }
 }
 
 function resetAppState() {
     isCaptured = false;
     puzzleP1.pieces = [];
+    puzzleP1.solved = false;
     puzzleP2.pieces = [];
+    puzzleP2.solved = false;
+    timerEl.textContent = "Waktu: 00:00";
 }
